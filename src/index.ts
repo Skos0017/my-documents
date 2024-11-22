@@ -2,65 +2,19 @@ import express, { Request, Response, NextFunction } from 'express';
 import cookieParser  from 'cookie-parser';
 import { readFilePromise, writeFilePromise } from './file-operator_module'
 import { User } from './User'
-import { stringify } from 'querystring';
-
+import {CookieCheck} from './middlewares/CookieCheck'
+import {replaceTemplateValues} from './helpers/template'
 
 const app = express();
 const cookieName = 'Token';
-
+let registratedUsers: User[] = [];
+const userDataJson = "/../userData.json"
 
 app.use(cookieParser());
 app.use(express.json()); // Готов принять JSON
 app.use(express.urlencoded({ extended: true })); // Укажите для обработки URL-encoded форм
 
-
-app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.url === '/registration' || req.url === '/registration-page' || req.url === '/login' || req.url === '/enter-page') {
-        next();
-        return;
-    }
-
-    const cookieHeader = req.headers.cookie;
-    if (!cookieHeader) {
-        readFilePromise('/../enter-page.html')
-            .then((page: string) => {
-                res.status(200).send(page);
-            })
-            .catch(next);
-        return;
-    }
-
-    const parsedCookies: string[] = cookieHeader.split('; ');
-    const tokenCookie: string | undefined = parsedCookies.find((cookie: string) => cookie.startsWith('Token='));
-    const token: string | undefined = tokenCookie ? tokenCookie.split('=')[1] : undefined;
-
-    if (!token) {
-        readFilePromise('/../enter-page.html')
-            .then((page: string) => {
-                res.status(200).send(page);
-            })
-            .catch(next);
-        return;
-    }
-
-    const user: User | undefined = registratedUsers.find((innerUser: User) => innerUser.token === token);
-
-    if (user) {
-        replaceTemplateValues('/../main-page.html',user)
-            .then((page: string) => {
-                res.status(200).send(page);
-            })
-            .catch(next);
-    } else {
-        readFilePromise('/../enter-page.html')
-            .then((page: string) => {
-                res.status(200).send(page);
-            })
-            .catch(next);
-    }
-});
-
-let registratedUsers: User[];
+app.use(CookieCheck(registratedUsers));
 
 function checkRegisteredUsers(req: Request, res: Response, next: NextFunction) {
     let user: User = new User(req.body.user);
@@ -79,24 +33,7 @@ function checkRegisteredUsers(req: Request, res: Response, next: NextFunction) {
     next();
 }
 
-function replaceTemplateValues(fileName: string, userData: User): Promise<string> {
-    return new Promise((resolve, reject) => {
-        readFilePromise(fileName)
-            // resolve
-            .then(function(data: string) {
-                data = data.replace('%username%', userData.username)
-                    .replace('%firstname%', userData.firstname)
-                    .replace('%lastname%', userData.lastname)
-                    .replace('%email%', userData.email)
-                    .replace('%password%', userData.password)
-                resolve(data);
-            })
-            // reject
-            .catch(function(err) {
-                console.log("Не смоглим прочитать файл: ", err);
-            });
-    });
-}
+
 
 function readTemplate(fileName: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -167,7 +104,7 @@ app.post('/login',checkRegisteredUsers, function(req: Request, res: Response) {
     let {login, password} = req.body.user;
 
 
-    readFilePromise('/userData.json')
+    readFilePromise(userDataJson)
     .then(function (dataUsers: string) {
         let users: User[] = JSON.parse(dataUsers);
         let userLogin: User | undefined;
@@ -200,7 +137,7 @@ app.post('/registration', checkRegisteredUsers, (req: Request, res: Response) =>
     // {user: {'Name': 'Kas'}}
     let newUser: User = new User(req.body.user);
 
-        readFilePromise('/userData.json')
+        readFilePromise(userDataJson)
         .then(dataUsers => {
             let users: User[] = JSON.parse(dataUsers);
             users.push(newUser);
@@ -208,7 +145,7 @@ app.post('/registration', checkRegisteredUsers, (req: Request, res: Response) =>
             newUser.setUserToken(generateToken(128, 9));
             registratedUsers.push(newUser);
 
-            return writeFilePromise('/userData.json', JSON.stringify(users, null, 2));
+            return writeFilePromise(userDataJson, JSON.stringify(users, null, 2));
         })
         .then(() => {
             return replaceTemplateValues('/../main-page.html', newUser)
@@ -222,9 +159,13 @@ app.post('/registration', checkRegisteredUsers, (req: Request, res: Response) =>
 });
 
 app.listen(3000, () => {
-    readFilePromise('/userData.json')
+    readFilePromise(userDataJson)
         .then((data: string) => {
-            registratedUsers = JSON.parse(data);
+            let users: User[] = JSON.parse(data);
+
+            for (const user of users) {
+                registratedUsers.push(user);
+            }
 
             console.log('Server running on port 3000')
         });
@@ -237,7 +178,7 @@ app.listen(3000, () => {
 // function checkRegisteredUsers(req: Request, res: Response, next: NextFunction) {
 //     let newUser = req.body.user;
 
-//     readFilePromise('/userData.json')
+//     readFilePromise(userDataJson)
 //         .then(data => {
 //             let users = JSON.parse(data as string);
 
@@ -359,14 +300,14 @@ function generateToken(length: cookieLength = 128, countSymbolsInBucket: number 
 // app.post('/registration', checkRegisteredUsers, (req: Request, res: Response) => {
 //     let newUser = new User(req.body.user);
 
-//     readFilePromise('/userData.json')
+//     readFilePromise(userDataJson)
 //         .then(data => {
 //             let users: User[] = JSON.parse(data);
 //             users.push(newUser);
 //             newUser.setUserToken(generateToken(128));
 //             registratedUsers.push(newUser);
 
-//             return writeFilePromise('/userData.json', JSON.stringify(users, null, 2));
+//             return writeFilePromise(userDataJson, JSON.stringify(users, null, 2));
 //         })
 //         .then(() => {
 //             return replaceTemplateValues(newUser)
@@ -410,7 +351,7 @@ function generateToken(length: cookieLength = 128, countSymbolsInBucket: number 
 // });
 
 // app.listen(3000, () => {
-//     readFilePromise('/userData.json')
+//     readFilePromise(userDataJson)
 //         .then((data: string) => {
 //             registratedUsers = JSON.parse(data);
 
